@@ -100,8 +100,8 @@ function spotifyScreenUpdateCoverImage() {
 
 // Вики
 /*--------------------------------------------*/
-const targetElementSelector = 'body > div > div > div > section > div > div > div > div > div > div > a:nth-child(1) > span';
-const fallbackElementSelector = 'body > div > div > div > section > div > div > div > div > div > div.SeparatedArtists_root_variant_breakAll__34YbW.SeparatedArtists_root_clamp__SyvjM.Meta_text__Y5uYH.Meta_artists__VnR52 > span';
+const targetElementSelector = 'body>div>div>div>section>div>div>div>div>div>div>a:nth-child(1)>span';
+const fallbackElementSelector = 'body>div>div>div>section>div>div>div>div>div>div.SeparatedArtists_root_variant_breakAll__34YbW.SeparatedArtists_root_clamp__SyvjM.Meta_text__Y5uYH.Meta_artists__VnR52>span';
 const trackNameSelector = '.SM_Track_Name';
 const Search_InfoSelector = '.Search_Info';
 const GPT_Search_InfoSelector = '.GPT_Search_Info';
@@ -112,15 +112,19 @@ let lastArtist = '';
 let lastTrack = '';
 let lastText = '';
 
+let neuroSearch = true;
+
+let isFetching = false;
+
 const fetchDataAndUpdateWiki = async (searchText) => {
     const Search_InfoElement = document.querySelector(Search_InfoSelector);
     const AchtungAlertElement = document.querySelector(AchtungAlertSelector);
 
     try {
         const response = await fetch(`https://ru.wikipedia.org/w/api.php?action=query&format=json&origin=*&titles=${encodeURIComponent(searchText)}&prop=extracts&exintro&explaintext`);
-        
-        if (!response.ok) throw new Error('Network response was not ok');
-        
+
+        if (!response.ok) throw new Error(`Network response was not ok: ${response.status} ${response.statusText}`);
+
         const data = await response.json();
         const page = Object.values(data.query.pages)[0];
 
@@ -132,9 +136,9 @@ const fetchDataAndUpdateWiki = async (searchText) => {
             AchtungAlertElement.style.display = 'none';
         }
     } catch (error) {
-        console.error('Ошибка при получении данных:', error);
+        console.error('Ошибка при получении данных из Википедии:', error);
         if (Search_InfoElement) {
-            Search_InfoElement.innerText = 'Ошибка при получении информации';
+            Search_InfoElement.innerText = 'Ошибка при получении информации из Википедии';
         }
         if (AchtungAlertElement) {
             AchtungAlertElement.style.display = 'none';
@@ -147,37 +151,48 @@ const fetchDataAndUpdateNeuro = async (artistName, trackName) => {
     const GPT_Search_InfoElement = document.querySelector(GPT_Search_InfoSelector);
     const AchtungAlertElement = document.querySelector(AchtungAlertSelector);
 
+    // ВАЖНО: ЗАМЕНИТЕ ЭТО НА СВОЙ API КЛЮЧ, ЕСЛИ ОН ТРЕБУЕТСЯ
+    const apiKey = ''; //  Оставьте пустой, если API не требует ключ
+
+    if (isFetching) {
+        console.log('Запрос уже выполняется, пропуск нового запроса к нейросети.');
+        return; // Выход из функции, если запрос уже выполняется
+    }
+
+    isFetching = true; // Устанавливаем флаг перед отправкой запроса
+
     try {
-        const prompt = `
-            Расскажи про артиста "${artistName}".
-            Затем расскажи про трек "${trackName}" этого артиста.
-            Раздели ответ следующим образом:
-            "=== Артист ===
-            [Артист] - [Информация об артисте]
-            === Трек ===
-            [Название трека] - [Информация о треке]"
-            Не добавляй приветствий и дополнительных слов, кроме указанного разделения.
-        `;
+        const prompt = `Расскажи про артиста "${artistName}". Затем расскажи про трек "${trackName}" этого артиста. Раздели ответ следующим образом: "=== Артист ===\n[Артист] - [Информация об артисте]\n=== Трек ===\n[Название трека] - [Информация о треке]". Не добавляй приветствий и дополнительных слов, кроме указанного разделения.`;
+
+        const headers = {
+            'Content-Type': 'application/json',
+        };
+
+        if (apiKey) {
+            headers['X-API-Key'] = apiKey; // Или другой заголовок, требуемый API
+        }
 
         const response = await fetch('http://api.onlysq.ru/ai/v1', {
             method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify([
-                {
-                    role: 'user',
-                    content: prompt.trim(),
-                },
-            ]),
+            headers: headers,
+            body: JSON.stringify([{ role: 'user', content: prompt.trim() }]),
         });
 
-        if (!response.ok) throw new Error('Network response was not ok');
+        if (!response.ok) {
+            let errorMessage = `Network response was not ok: ${response.status} ${response.statusText}`;
+            try {
+                const errorData = await response.json();
+                errorMessage += ` - ${errorData.error || errorData.message || JSON.stringify(errorData)}`;  // Улучшено получение сообщения об ошибке
+            } catch (e) {
+                // Не удалось распарсить JSON ответа (значит ошибка не в JSON формате)
+                errorMessage += ` (Could not parse JSON error response)`;
+            }
+            throw new Error(errorMessage);
+        }
 
         const data = await response.json();
         const gptAnswer = data.answer || 'Нет информации';
 
-        // Разделение ответа по ключевым разделителям
         const [artistInfo, trackInfo] = gptAnswer.split(/=== Трек ===/i);
 
         if (Search_InfoElement) {
@@ -189,16 +204,18 @@ const fetchDataAndUpdateNeuro = async (artistName, trackName) => {
 
         AchtungAlertElement.style.display = 'block';
     } catch (error) {
-        console.error('Ошибка при получении данных:', error);
+        console.error('Ошибка при получении данных от нейросети:', error);
         if (Search_InfoElement) {
-            Search_InfoElement.innerText = 'Ошибка при получении информации об артисте';
+            Search_InfoElement.innerText = 'Ошибка при получении информации об артисте от нейросети';
         }
         if (GPT_Search_InfoElement) {
-            GPT_Search_InfoElement.innerText = 'Ошибка при получении информации о треке';
+            GPT_Search_InfoElement.innerText = 'Ошибка при получении информации о треке от нейросети';
         }
         if (AchtungAlertElement) {
             AchtungAlertElement.style.display = 'none';
         }
+    } finally {
+        isFetching = false; // Сбрасываем флаг после завершения запроса (успешного или с ошибкой)
     }
 };
 
@@ -241,6 +258,11 @@ const toggleGPTInfoContainer = () => {
         GPT_InfoContainerElement.style.display = neuroSearch ? 'block' : 'none';
     }
 };
+
+setInterval(() => {
+    checkForChanges();
+    toggleGPTInfoContainer();
+}, 1000);
 /*--------------------------------------------*/
 
 // Cкрытие Spotify Screen
